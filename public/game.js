@@ -140,22 +140,30 @@
   // ---------- Voice chat (WebRTC) ----------
   const peerConns = new Map(); // peerId -> RTCPeerConnection
   let localAudio = null;
+  let voiceReady = null; // promise resolved when mic is ready
   let muted = false;
 
-  async function initVoice() {
-    try {
-      localAudio = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      if (voiceStatus) voiceStatus.textContent = 'MIC LIVE — SPEAK UP';
-    } catch (e) {
-      if (voiceStatus) voiceStatus.textContent = 'NO MIC ACCESS';
-      console.warn('Mic unavailable:', e);
-    }
+  function initVoice() {
+    if (voiceReady) return voiceReady;
+    voiceReady = navigator.mediaDevices
+      .getUserMedia({ audio: true, video: false })
+      .then(stream => {
+        localAudio = stream;
+        if (voiceStatus) voiceStatus.textContent = 'MIC LIVE — SPEAK UP';
+      })
+      .catch(() => {
+        if (voiceStatus) voiceStatus.textContent = 'NO MIC ACCESS';
+      });
+    return voiceReady;
   }
 
-  function makePeer(peerId, initiator) {
+  async function makePeer(peerId, initiator) {
     if (peerConns.has(peerId)) return peerConns.get(peerId);
     const pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+      ],
     });
     peerConns.set(peerId, pc);
 
@@ -168,33 +176,35 @@
     };
 
     pc.ontrack = e => {
-      const audio = new Audio();
-      audio.srcObject = e.streams[0];
-      audio.autoplay = true;
-      document.body.appendChild(audio);
+      if (!pc._audio) {
+        pc._audio = document.createElement('audio');
+        pc._audio.autoplay = true;
+        document.body.appendChild(pc._audio);
+      }
+      pc._audio.srcObject = e.streams[0];
+      pc._audio.play().catch(() => {});
     };
 
     if (initiator) {
-      pc.onnegotiationneeded = async () => {
-        try {
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          socket.emit('webrtc:offer', { to: peerId, offer });
-        } catch {}
-      };
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit('webrtc:offer', { to: peerId, offer });
+      } catch (e) { console.warn('WebRTC offer error:', e); }
     }
 
     return pc;
   }
 
   socket.on('webrtc:offer', async ({ from, offer }) => {
-    const pc = makePeer(from, false);
+    await initVoice(); // ensure mic ready before answering
+    const pc = await makePeer(from, false);
     try {
       await pc.setRemoteDescription(offer);
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       socket.emit('webrtc:answer', { to: from, answer });
-    } catch {}
+    } catch (e) { console.warn('WebRTC answer error:', e); }
   });
 
   socket.on('webrtc:answer', async ({ from, answer }) => {
@@ -232,7 +242,7 @@
 
     // Initiate WebRTC connections to everyone already in the lobby
     for (const peerId of (peerIds || [])) {
-      makePeer(peerId, true);
+      await makePeer(peerId, true);
     }
   });
 
@@ -421,14 +431,15 @@
     const h = gameCanvas.height / (window.devicePixelRatio || 1);
     ctx.clearRect(0, 0, w, h);
 
-    // Scale arena to nearly fill the canvas
-    const margin = 20;
+    // Account for the HUD bar that overlaps the top of the canvas
+    const hudH = 58;
+    const availH = h - hudH;
     const scale = Math.min(
-      (w - margin) / (config.ARENA_RADIUS * 2),
-      (h - margin) / (config.ARENA_RADIUS * 2)
-    );
+      w / (config.ARENA_RADIUS * 2),
+      availH / (config.ARENA_RADIUS * 2)
+    ) * 0.97;
     const cx = w / 2;
-    const cy = h / 2;
+    const cy = hudH + availH / 2;
     const toScreen = (wx, wy) => ({
       x: cx + (wx - config.ARENA_CENTER.x) * scale,
       y: cy + (wy - config.ARENA_CENTER.y) * scale,
@@ -494,8 +505,8 @@
     ctx.rotate(rot);
     ctx.scale(sc, sc);
 
-    const bodyR = r * 1.1;
-    const bodyY = r + bodyR * 0.8;
+    const bodyR = r * 1.6;
+    const bodyY = r + bodyR * 0.75;
     const skin = p.id === myId ? '#dba96a' : '#ecc080';
     const belt = p.id === myId ? '#e9b949' : '#d1334a';
     const ring = p.id === myId ? '#e9b949' : '#f4ecd8';
