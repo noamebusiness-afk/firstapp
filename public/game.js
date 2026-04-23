@@ -51,11 +51,11 @@
       });
       video.srcObject = mediaStream;
       await video.play();
-      loginHint.textContent = 'Camera ready. Strike a pose.';
+      loginHint.textContent = 'המצלמה מוכנה. עשה פוזה.';
       snapBtn.disabled = false;
     } catch (err) {
       console.error('Camera error:', err);
-      loginHint.textContent = 'Camera blocked. Please allow webcam access and reload.';
+      loginHint.textContent = 'המצלמה חסומה. אפשר גישה למצלמה ורענן.';
     }
   }
 
@@ -149,10 +149,10 @@
       .getUserMedia({ audio: true, video: false })
       .then(stream => {
         localAudio = stream;
-        if (voiceStatus) voiceStatus.textContent = 'MIC LIVE — SPEAK UP';
+        if (voiceStatus) voiceStatus.textContent = 'מיק פעיל — דברו';
       })
       .catch(() => {
-        if (voiceStatus) voiceStatus.textContent = 'NO MIC ACCESS';
+        if (voiceStatus) voiceStatus.textContent = 'אין גישה למיק';
       });
     return voiceReady;
   }
@@ -220,7 +220,7 @@
   muteBtn && muteBtn.addEventListener('click', () => {
     muted = !muted;
     if (localAudio) localAudio.getAudioTracks().forEach(t => { t.enabled = !muted; });
-    muteBtn.textContent = muted ? '🔇 UNMUTE' : '🎤 MUTE';
+    muteBtn.textContent = muted ? '🔇 בטל השתקה' : '🎤 השתק';
     muteBtn.classList.toggle('muted', muted);
     const myDot = voiceList && voiceList.querySelector(`[data-pid="${myId}"] .voice-player__dot`);
     if (myDot) myDot.classList.toggle('muted', muted);
@@ -261,7 +261,7 @@
       `;
       playerGrid.appendChild(card);
     });
-    playerCount.textContent = `${players.length} rikishi`;
+    playerCount.textContent = `${players.length} מתאבקים`;
 
     if (voiceList) {
       voiceList.innerHTML = '';
@@ -288,15 +288,15 @@
     const name = nameInput.value.trim();
     if (!name) {
       nameInput.focus();
-      loginHint.textContent = 'Pick a ring name first.';
+      loginHint.textContent = 'בחר שם זירה קודם.';
       return;
     }
     const face = captureFaceCircle();
     if (!face) {
-      loginHint.textContent = 'Could not grab a frame. Try again.';
+      loginHint.textContent = 'לא הצלחנו לצלם. נסה שוב.';
       return;
     }
-    loginHint.textContent = 'Entering the ring…';
+    loginHint.textContent = 'נכנס לזירה...';
     snapBtn.disabled = true;
     socket.emit('player:join', { name, face });
   });
@@ -357,14 +357,14 @@
   socket.on('game:countdown_start', ({ seconds }) => {
     show('game');
     showCountdown(seconds);
-    gameStatus.textContent = 'GET READY';
+    gameStatus.textContent = 'התכוננו';
     winnerOverlay.classList.remove('show');
     eliminatedBanner.classList.remove('show');
   });
   socket.on('game:countdown_tick', ({ remaining }) => { showCountdown(remaining); });
   socket.on('game:start', () => {
     showCountdown('GO!');
-    gameStatus.textContent = 'FIGHT';
+    gameStatus.textContent = 'הילחמו!';
   });
   socket.on('game:eliminated', ({ id }) => {
     if (id === myId) {
@@ -374,7 +374,7 @@
     }
   });
   socket.on('game:winner', winner => {
-    gameStatus.textContent = winner ? 'BOUT OVER' : 'DRAW';
+    gameStatus.textContent = winner ? 'הקרב נגמר' : 'תיקו';
     if (winner) {
       winnerFace.src = faceData.get(winner.id) || '';
       winnerName.textContent = winner.name;
@@ -458,42 +458,84 @@
   }
 
   function drawArena(cx, cy, r) {
+    const t = performance.now() / 1000;
     ctx.save();
 
+    // Dark halo outside the ring
     ctx.beginPath();
-    ctx.arc(cx, cy, r + 14, 0, Math.PI * 2);
-    ctx.fillStyle = '#0a0b1a';
+    ctx.arc(cx, cy, r + 34, 0, Math.PI * 2);
+    ctx.fillStyle = '#04050d';
     ctx.fill();
 
-    const grad = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.3, r * 0.1, cx, cy, r);
-    grad.addColorStop(0, '#e8c9a0');
-    grad.addColorStop(0.7, '#c9a678');
-    grad.addColorStop(1, '#9c7b4e');
+    // Arena floor — dark clay with gold spotlight
+    const floor = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    floor.addColorStop(0, '#2e1c0e');
+    floor.addColorStop(0.55, '#1c1008');
+    floor.addColorStop(1, '#0a0603');
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.fillStyle = grad;
+    ctx.fillStyle = floor;
     ctx.fill();
 
-    ctx.lineWidth = Math.max(3, r * 0.02);
-    ctx.strokeStyle = '#f4ecd8';
-    ctx.stroke();
-
+    // Central spotlight
+    const spot = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * 0.7);
+    spot.addColorStop(0, 'rgba(233,185,73,0.14)');
+    spot.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.beginPath();
-    ctx.arc(cx, cy, r * 0.04, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(15,16,32,0.35)';
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = spot;
     ctx.fill();
 
-    ctx.strokeStyle = 'rgba(15,16,32,0.12)';
+    // Faint cross guides
+    ctx.strokeStyle = 'rgba(255,255,255,0.04)';
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(cx - r, cy); ctx.lineTo(cx + r, cy);
     ctx.moveTo(cx, cy - r); ctx.lineTo(cx, cy + r);
     ctx.stroke();
 
+    // Center marker glow
+    ctx.shadowColor = '#e9b949';
+    ctx.shadowBlur = 12;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * 0.028, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(233,185,73,0.6)';
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Neon ring — layered glow strokes
+    const glowLayers = [[18, 0.06], [10, 0.14], [5, 0.45], [2, 1]];
+    for (const [lw, alpha] of glowLayers) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(79,194,160,${alpha})`;
+      ctx.lineWidth = lw;
+      ctx.stroke();
+    }
+
+    // Pulsing LED dots around the ring
+    const numLeds = 40;
+    const ledColors = ['#d1334a', '#4fc2a0', '#e9b949'];
+    for (let i = 0; i < numLeds; i++) {
+      const angle = (i / numLeds) * Math.PI * 2;
+      const pulse = 0.55 + 0.45 * Math.sin(t * 2.2 + i * 0.72);
+      const lx = cx + Math.cos(angle) * (r + 20);
+      const ly = cy + Math.sin(angle) * (r + 20);
+      const col = ledColors[i % 3];
+      ctx.shadowColor = col;
+      ctx.shadowBlur = 10;
+      ctx.globalAlpha = pulse;
+      ctx.beginPath();
+      ctx.arc(lx, ly, 4.5, 0, Math.PI * 2);
+      ctx.fillStyle = col;
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+
     ctx.restore();
   }
 
-  // Draw a chibi sumo doll: topknot → head (face) → neck → body → mawashi → arms → legs
   function drawPlayer(p, x, y, r) {
     const img = getFaceImg(p.id);
     ctx.save();
@@ -501,9 +543,20 @@
     const sc = p.alive ? 1 : Math.max(0.05, p.fallScale ?? 1);
     const rot = p.alive ? 0 : (p.fallRotation ?? 0);
 
-    ctx.translate(x, y);
-    ctx.rotate(rot);
-    ctx.scale(sc, sc);
+    // Walking / running animation
+    const t = performance.now() / 1000;
+    const speed = Math.hypot(p.vx || 0, p.vy || 0);
+    const moving = p.alive && speed > 0.35;
+    const phase = t * Math.max(speed, 1) * 3.8;
+    const bob = moving ? Math.abs(Math.sin(phase)) * r * -0.14 : 0;
+    const legSwing = moving ? Math.sin(phase) : 0;
+    const squashX = moving ? 1 + Math.abs(Math.sin(phase)) * 0.06 : 1;
+    // Lean left/right based on horizontal velocity
+    const leanAmt = moving ? Math.sign(p.vx || 0) * Math.min(speed * 0.022, 0.15) : 0;
+
+    ctx.translate(x, y + (p.alive ? bob : 0));
+    ctx.rotate(rot + (p.alive ? leanAmt : 0));
+    ctx.scale(sc * squashX, sc / squashX);
 
     const bodyR = r * 1.6;
     const bodyY = r + bodyR * 0.75;
@@ -511,18 +564,21 @@
     const belt = p.id === myId ? '#e9b949' : '#d1334a';
     const ring = p.id === myId ? '#e9b949' : '#f4ecd8';
 
-    // Ground shadow
+    // Ground shadow (shrinks when mid-bounce)
     if (p.alive) {
+      const shadowScale = moving ? 0.7 + 0.3 * Math.abs(Math.sin(phase)) : 1;
       ctx.beginPath();
-      ctx.ellipse(0, bodyY + bodyR + r * 0.12, bodyR * 0.9, r * 0.16, 0, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(0,0,0,0.28)';
+      ctx.ellipse(0, bodyY + bodyR + r * 0.12, bodyR * 0.85 * shadowScale, r * 0.14, 0, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(0,0,0,0.32)';
       ctx.fill();
     }
 
-    // Legs
-    for (const s of [-1, 1]) {
+    // Legs — alternate forward/back when walking
+    const leftLegX  = -bodyR * 0.37 + legSwing * r * 0.28;
+    const rightLegX =  bodyR * 0.37 - legSwing * r * 0.28;
+    for (const [lx] of [[leftLegX], [rightLegX]]) {
       ctx.beginPath();
-      ctx.ellipse(s * bodyR * 0.37, bodyY + bodyR * 0.68, r * 0.3, r * 0.44, 0, 0, Math.PI * 2);
+      ctx.ellipse(lx, bodyY + bodyR * 0.68, r * 0.3, r * 0.44, 0, 0, Math.PI * 2);
       ctx.fillStyle = skin;
       ctx.fill();
       ctx.strokeStyle = '#0f1020';
@@ -553,10 +609,12 @@
     ctx.lineWidth = 2;
     ctx.stroke();
 
-    // Arms
-    for (const s of [-1, 1]) {
+    // Arms — swing opposite to legs
+    const leftArmY  = bodyY - bodyR * 0.1 - legSwing * r * 0.3;
+    const rightArmY = bodyY - bodyR * 0.1 + legSwing * r * 0.3;
+    for (const [ax, ay, s] of [[-(bodyR + r * 0.3), leftArmY, -1], [(bodyR + r * 0.3), rightArmY, 1]]) {
       ctx.beginPath();
-      ctx.ellipse(s * (bodyR + r * 0.3), bodyY - bodyR * 0.1, r * 0.36, r * 0.26, s * 0.35, 0, Math.PI * 2);
+      ctx.ellipse(ax, ay, r * 0.36, r * 0.26, s * 0.35, 0, Math.PI * 2);
       ctx.fillStyle = skin;
       ctx.fill();
       ctx.strokeStyle = '#0f1020';
@@ -570,13 +628,18 @@
     ctx.fillStyle = skin;
     ctx.fill();
 
-    // Head ring (gold for me, cream for others)
+    // Head ring glow (gold = me, cream = others)
+    if (p.id === myId) {
+      ctx.shadowColor = '#e9b949';
+      ctx.shadowBlur = 10;
+    }
     ctx.beginPath();
     ctx.arc(0, 0, r + 3, 0, Math.PI * 2);
     ctx.fillStyle = ring;
     ctx.fill();
+    ctx.shadowBlur = 0;
 
-    // Face image clipped to circle
+    // Face image clipped
     ctx.save();
     ctx.beginPath();
     ctx.arc(0, 0, r, 0, Math.PI * 2);
@@ -602,7 +665,7 @@
     ctx.fillStyle = '#1a1205';
     ctx.fill();
 
-    // Name label below body
+    // Name label
     if (p.alive && sc > 0.5) {
       const fs = Math.max(11, r * 0.3);
       ctx.font = `bold ${fs}px 'Bungee', sans-serif`;

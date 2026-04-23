@@ -1,12 +1,12 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="he">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>相撲 · SUMO FACES</title>
+  <title>相撲 · פנים סומו</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Bungee&family=Shippori+Mincho:wght@700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Bungee&family=Heebo:wght@400;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -23,10 +23,10 @@
   <!-- ============ LOGIN SCREEN ============ -->
   <section id="screen-login" class="screen active">
     <div class="login-card">
-      <div class="login-card__ribbon">STEP 01 — ENTRY</div>
+      <div class="login-card__ribbon">שלב 01 — כניסה</div>
       <h1 class="login-card__title">
-        Scan your face.<br/>
-        <span class="accent">Enter the ring.</span>
+        סרוק את הפנים שלך.<br/>
+        <span class="accent">היכנס לזירה.</span>
       </h1>
 
       <div class="login-card__body">
@@ -34,19 +34,19 @@
           <video id="video" autoplay playsinline muted></video>
           <div class="video-frame"></div>
           <div class="video-target"></div>
-          <div class="video-meta">LIVE · CAM 01</div>
+          <div class="video-meta">שידור חי · מצלמה 01</div>
         </div>
 
         <div class="login-form">
-          <label class="login-form__label">YOUR RING NAME</label>
-          <input id="nameInput" type="text" maxlength="20" placeholder="e.g. thunder-belly" />
+          <label class="login-form__label">שם הזירה שלך</label>
+          <input id="nameInput" type="text" maxlength="20" placeholder="לדוגמא: בטן-רעם" />
 
           <button id="snapBtn" class="btn btn--primary" disabled>
-            <span class="btn__text">SNAP &amp; JOIN</span>
+            <span class="btn__text">צלם והצטרף</span>
             <span class="btn__arrow">→</span>
           </button>
 
-          <p class="login-form__hint" id="loginHint">Waiting for camera…</p>
+          <p class="login-form__hint" id="loginHint">ממתין למצלמה...</p>
         </div>
       </div>
     </div>
@@ -63,14 +63,14 @@
       <div class="lobby__left">
         <div class="section-head">
           <span class="section-head__num">02</span>
-          <h2>THE DOHYŌ AWAITS</h2>
+          <h2>הדוהיו ממתין</h2>
           <span class="section-head__count" id="playerCount">0 rikishi</span>
         </div>
 
         <div id="playerGrid" class="player-grid"></div>
 
         <button id="startBtn" class="btn btn--primary btn--huge">
-          <span class="btn__text">START THE BOUT</span>
+          <span class="btn__text">התחל את הקרב</span>
           <span class="btn__arrow">⚔</span>
         </button>
       </div>
@@ -78,12 +78,12 @@
       <aside class="lobby__right">
         <div class="section-head">
           <span class="section-head__num">03</span>
-          <h2>VOICE CHAT</h2>
+          <h2>צ'אט קולי</h2>
         </div>
         <div id="voiceList" class="voice-list"></div>
         <div class="voice-controls">
-          <div id="voiceStatus" class="voice-status">CONNECTING MIC…</div>
-          <button id="muteBtn">🎤 MUTE</button>
+          <div id="voiceStatus" class="voice-status">מתחבר למיק...</div>
+          <button id="muteBtn">🎤 השתק</button>
         </div>
       </aside>
     </div>
@@ -93,15 +93,15 @@
   <section id="screen-game" class="screen">
     <div class="game-hud">
       <div class="game-hud__left">
-        <span class="hud-label">ROUND</span>
+        <span class="hud-label">נותרו</span>
         <span class="hud-value" id="aliveCount">—</span>
-        <span class="hud-label-sub">remaining</span>
+        <span class="hud-label-sub">שחקנים</span>
       </div>
-      <div class="game-hud__center" id="gameStatus">READY</div>
+      <div class="game-hud__center" id="gameStatus">מוכן</div>
       <div class="game-hud__right">
-        <span class="hud-label">CTRL</span>
+        <span class="hud-label">שליטה</span>
         <span class="hud-keys hud-keys--desktop">W A S D · ↑ ← ↓ →</span>
-        <span class="hud-keys hud-keys--mobile">DRAG TO MOVE</span>
+        <span class="hud-keys hud-keys--mobile">גרור לזוז</span>
       </div>
     </div>
 
@@ -118,15 +118,15 @@
     <!-- Winner overlay -->
     <div id="winnerOverlay" class="winner-overlay">
       <div class="winner-card">
-        <div class="winner-card__label">YOKOZUNA</div>
+        <div class="winner-card__label">יוקוזונה</div>
         <div class="winner-card__face"><img id="winnerFace" alt="winner" /></div>
         <div class="winner-card__name" id="winnerName"></div>
-        <div class="winner-card__sub">returning to the dohyō…</div>
+        <div class="winner-card__sub">חוזר לדוהיו...</div>
       </div>
     </div>
 
     <!-- Elimination toast -->
-    <div id="eliminatedBanner" class="eliminated-banner">YOU FELL OUT!</div>
+    <div id="eliminatedBanner" class="eliminated-banner">נפלת החוצה!</div>
   </section>
 
   <script src="/socket.io/socket.io.js"></script>
