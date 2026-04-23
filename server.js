@@ -250,6 +250,7 @@ io.on('connection', (socket) => {
     const idx = Object.keys(players).length;
     const pos = newSpawnPosition(idx, Object.keys(players).length + 1);
 
+    const peerIds = Object.keys(players); // existing peers before adding self
     players[socket.id] = {
       id: socket.id,
       name: clean,
@@ -264,22 +265,28 @@ io.on('connection', (socket) => {
       fallScale: 1,
     };
 
-    socket.emit('player:joined', { id: socket.id });
+    socket.emit('player:joined', { id: socket.id, peerIds });
     broadcastLobby();
     console.log(`${clean} joined (${socket.id})`);
   });
 
-  socket.on('chat:message', ({ text }) => {
+  // Live face update from webcam stream
+  socket.on('player:face_update', ({ face }) => {
     const p = players[socket.id];
-    if (!p || !text) return;
-    const clean = String(text).slice(0, 200);
-    io.emit('chat:message', {
-      id: socket.id,
-      name: p.name,
-      face: p.face,
-      text: clean,
-      ts: Date.now(),
-    });
+    if (!p || !face) return;
+    p.face = face;
+    socket.broadcast.emit('player:face_updated', { id: socket.id, face });
+  });
+
+  // WebRTC signaling
+  socket.on('webrtc:offer', ({ to, offer }) => {
+    io.to(to).emit('webrtc:offer', { from: socket.id, offer });
+  });
+  socket.on('webrtc:answer', ({ to, answer }) => {
+    io.to(to).emit('webrtc:answer', { from: socket.id, answer });
+  });
+  socket.on('webrtc:ice', ({ to, candidate }) => {
+    io.to(to).emit('webrtc:ice', { from: socket.id, candidate });
   });
 
   socket.on('game:start_request', () => {

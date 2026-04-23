@@ -10,6 +10,7 @@
     game: $('screen-game'),
   };
   const video = $('video');
+  const liveVideo = $('liveVideo');
   const snapCanvas = $('snapCanvas');
   const nameInput = $('nameInput');
   const snapBtn = $('snapBtn');
@@ -17,9 +18,9 @@
   const playerGrid = $('playerGrid');
   const playerCount = $('playerCount');
   const startBtn = $('startBtn');
-  const chatMessages = $('chatMessages');
-  const chatForm = $('chatForm');
-  const chatInput = $('chatInput');
+  const voiceList = $('voiceList');
+  const muteBtn = $('muteBtn');
+  const voiceStatus = $('voiceStatus');
   const gameCanvas = $('gameCanvas');
   const countdownEl = $('countdown');
   const winnerOverlay = $('winnerOverlay');
@@ -29,13 +30,19 @@
   const aliveCount = $('aliveCount');
   const gameStatus = $('gameStatus');
 
+  gameCanvas.setAttribute('tabindex', '0');
+
   // ---------- Screen switching ----------
   function show(name) {
     Object.entries(screens).forEach(([k, el]) => el.classList.toggle('active', k === name));
+    if (name === 'game') {
+      gameCanvas.focus();
+    }
   }
 
   // ---------- Webcam ----------
   let mediaStream = null;
+
   async function initCamera() {
     try {
       mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -49,77 +56,196 @@
     } catch (err) {
       console.error('Camera error:', err);
       loginHint.textContent = 'Camera blocked. Please allow webcam access and reload.';
-      snapBtn.disabled = true;
     }
   }
 
-  // Capture current video frame, crop to circle on transparent background, return base64 PNG
-  function captureFaceCircle() {
+  function captureFaceCircleFrom(src) {
     const ctx = snapCanvas.getContext('2d');
     const size = snapCanvas.width; // 256
     ctx.clearRect(0, 0, size, size);
 
-    // Use the smaller video dimension to crop a square from the middle
-    const vw = video.videoWidth;
-    const vh = video.videoHeight;
+    const vw = src.videoWidth;
+    const vh = src.videoHeight;
     if (!vw || !vh) return null;
     const side = Math.min(vw, vh);
     const sx = (vw - side) / 2;
     const sy = (vh - side) / 2;
 
-    // Circular mask
     ctx.save();
     ctx.beginPath();
     ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
     ctx.closePath();
     ctx.clip();
-
-    // Mirror horizontally to match user's reflection in the video preview
     ctx.translate(size, 0);
     ctx.scale(-1, 1);
-    ctx.drawImage(video, sx, sy, side, side, 0, 0, size, size);
+    ctx.drawImage(src, sx, sy, side, side, 0, 0, size, size);
     ctx.restore();
 
-    return snapCanvas.toDataURL('image/png');
+    return snapCanvas.toDataURL('image/jpeg', 0.65);
+  }
+
+  function captureFaceCircle() {
+    return captureFaceCircleFrom(video);
   }
 
   // ---------- Socket ----------
   const socket = io();
   let myId = null;
   let config = { ARENA_RADIUS: 400, ARENA_CENTER: { x: 500, y: 500 }, PLAYER_RADIUS: 40 };
-
   fetch('/config.json').then(r => r.json()).then(c => { config = c; });
 
-  socket.on('player:joined', ({ id }) => {
+  // ---------- Face cache ----------
+  const faceData = new Map();   // id -> dataUrl (latest)
+  const faceImgs = new Map();   // id -> HTMLImageElement
+
+  function setFace(id, dataUrl) {
+    faceData.set(id, dataUrl);
+    if (faceImgs.has(id)) {
+      faceImgs.get(id).src = dataUrl;
+    } else {
+      const img = new Image();
+      img.src = dataUrl;
+      faceImgs.set(id, img);
+    }
+  }
+
+  function getFaceImg(id) {
+    if (!faceImgs.has(id)) {
+      const img = new Image();
+      img.src = faceData.get(id) || '';
+      faceImgs.set(id, img);
+    }
+    return faceImgs.get(id);
+  }
+
+  // ---------- Live face streaming ----------
+  let faceStreamTimer = null;
+
+  function startFaceStream() {
+    if (faceStreamTimer) return;
+    faceStreamTimer = setInterval(() => {
+      const face = captureFaceCircleFrom(liveVideo);
+      if (face) socket.emit('player:face_update', { face });
+    }, 150);
+  }
+
+  socket.on('player:face_updated', ({ id, face }) => {
+    setFace(id, face);
+    const cardImg = playerGrid.querySelector(`[data-pid="${id}"] img`);
+    if (cardImg) cardImg.src = face;
+    const vpImg = voiceList && voiceList.querySelector(`[data-pid="${id}"] img`);
+    if (vpImg) vpImg.src = face;
+  });
+
+  // ---------- Voice chat (WebRTC) ----------
+  const peerConns = new Map(); // peerId -> RTCPeerConnection
+  let localAudio = null;
+  let muted = false;
+
+  async function initVoice() {
+    try {
+      localAudio = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      if (voiceStatus) voiceStatus.textContent = 'MIC LIVE — SPEAK UP';
+    } catch (e) {
+      if (voiceStatus) voiceStatus.textContent = 'NO MIC ACCESS';
+      console.warn('Mic unavailable:', e);
+    }
+  }
+
+  function makePeer(peerId, initiator) {
+    if (peerConns.has(peerId)) return peerConns.get(peerId);
+    const pc = new RTCPeerConnection({
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+    });
+    peerConns.set(peerId, pc);
+
+    if (localAudio) {
+      localAudio.getTracks().forEach(t => pc.addTrack(t, localAudio));
+    }
+
+    pc.onicecandidate = e => {
+      if (e.candidate) socket.emit('webrtc:ice', { to: peerId, candidate: e.candidate });
+    };
+
+    pc.ontrack = e => {
+      const audio = new Audio();
+      audio.srcObject = e.streams[0];
+      audio.autoplay = true;
+      document.body.appendChild(audio);
+    };
+
+    if (initiator) {
+      pc.onnegotiationneeded = async () => {
+        try {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          socket.emit('webrtc:offer', { to: peerId, offer });
+        } catch {}
+      };
+    }
+
+    return pc;
+  }
+
+  socket.on('webrtc:offer', async ({ from, offer }) => {
+    const pc = makePeer(from, false);
+    try {
+      await pc.setRemoteDescription(offer);
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socket.emit('webrtc:answer', { to: from, answer });
+    } catch {}
+  });
+
+  socket.on('webrtc:answer', async ({ from, answer }) => {
+    const pc = peerConns.get(from);
+    if (pc) try { await pc.setRemoteDescription(answer); } catch {}
+  });
+
+  socket.on('webrtc:ice', async ({ from, candidate }) => {
+    const pc = peerConns.get(from);
+    if (pc) try { await pc.addIceCandidate(candidate); } catch {}
+  });
+
+  muteBtn && muteBtn.addEventListener('click', () => {
+    muted = !muted;
+    if (localAudio) localAudio.getAudioTracks().forEach(t => { t.enabled = !muted; });
+    muteBtn.textContent = muted ? '🔇 UNMUTE' : '🎤 MUTE';
+    muteBtn.classList.toggle('muted', muted);
+    const myDot = voiceList && voiceList.querySelector(`[data-pid="${myId}"] .voice-player__dot`);
+    if (myDot) myDot.classList.toggle('muted', muted);
+  });
+
+  // ---------- Joining ----------
+  socket.on('player:joined', async ({ id, peerIds }) => {
     myId = id;
     show('lobby');
-    // Release the camera once we have the snapshot
+
+    // Hand off the camera stream to the hidden live-video element
     if (mediaStream) {
-      mediaStream.getTracks().forEach(t => t.stop());
-      mediaStream = null;
+      liveVideo.srcObject = mediaStream;
+      liveVideo.play().catch(() => {});
+    }
+
+    await initVoice();
+    startFaceStream();
+
+    // Initiate WebRTC connections to everyone already in the lobby
+    for (const peerId of (peerIds || [])) {
+      makePeer(peerId, true);
     }
   });
 
   // ---------- Lobby state ----------
-  const faceCache = new Map(); // id -> HTMLImageElement
-
-  function ensureFaceImage(id, dataUrl) {
-    if (faceCache.has(id)) return faceCache.get(id);
-    const img = new Image();
-    img.src = dataUrl;
-    faceCache.set(id, img);
-    return img;
-  }
-
   socket.on('lobby:update', ({ players, state }) => {
-    // Render player grid
     playerGrid.innerHTML = '';
     players.forEach(p => {
-      ensureFaceImage(p.id, p.face);
+      if (p.face) setFace(p.id, p.face);
       const card = document.createElement('div');
       card.className = 'player-card';
+      card.dataset.pid = p.id;
       card.innerHTML = `
-        <div class="player-card__face"><img src="${p.face}" alt="${p.name}" /></div>
+        <div class="player-card__face"><img src="${faceData.get(p.id) || p.face || ''}" alt="${p.name}" /></div>
         <div class="player-card__name">${escapeHtml(p.name)}</div>
         ${p.id === myId ? '<div class="player-card__badge">YOU</div>' : ''}
       `;
@@ -127,57 +253,27 @@
     });
     playerCount.textContent = `${players.length} rikishi`;
 
+    if (voiceList) {
+      voiceList.innerHTML = '';
+      players.forEach(p => {
+        const el = document.createElement('div');
+        el.className = 'voice-player';
+        el.dataset.pid = p.id;
+        el.innerHTML = `
+          <div class="voice-player__face"><img src="${faceData.get(p.id) || p.face || ''}" alt="${p.name}" /></div>
+          <div class="voice-player__name">${escapeHtml(p.name)}</div>
+          <div class="voice-player__dot${p.id === myId ? ' you' : ''}"></div>
+        `;
+        voiceList.appendChild(el);
+      });
+    }
+
     if (state === 'lobby' && screens.game.classList.contains('active')) {
       show('lobby');
     }
   });
 
-  // ---------- Chat ----------
-  chatForm.addEventListener('submit', e => {
-    e.preventDefault();
-    const text = chatInput.value.trim();
-    if (!text) return;
-    socket.emit('chat:message', { text });
-    chatInput.value = '';
-  });
-
-  socket.on('chat:message', ({ id, name, face, text }) => {
-    ensureFaceImage(id, face);
-    const el = document.createElement('div');
-    el.className = 'chat-msg';
-    el.innerHTML = `
-      <div class="chat-msg__face"><img src="${face}" alt="" /></div>
-      <div class="chat-msg__body">
-        <div class="chat-msg__name">${escapeHtml(name)}</div>
-        <div class="chat-msg__text">${escapeHtml(text)}</div>
-      </div>
-    `;
-    chatMessages.appendChild(el);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-  });
-
-  function addSystemMessage(text) {
-    const el = document.createElement('div');
-    el.className = 'chat-msg chat-msg--system';
-    el.innerHTML = `<div class="chat-msg__body"><div class="chat-msg__text">★ ${escapeHtml(text)}</div></div>`;
-    chatMessages.appendChild(el);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-  }
-
-  function escapeHtml(s) {
-    return String(s)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-  }
-
   // ---------- Login ----------
-  nameInput.addEventListener('input', () => {
-    // no-op; button stays enabled once camera is ready
-  });
-
   snapBtn.addEventListener('click', () => {
     const name = nameInput.value.trim();
     if (!name) {
@@ -197,52 +293,47 @@
 
   startBtn.addEventListener('click', () => {
     socket.emit('game:start_request');
+    startBtn.blur();
   });
 
   // ---------- Game input ----------
-  const input = { up: false, down: false, left: false, right: false };
-  let lastInputSent = 0;
+  const inputState = { up: false, down: false, left: false, right: false };
 
   function setKey(key, down) {
     let changed = false;
     switch (key) {
       case 'w': case 'W': case 'ArrowUp':
-        if (input.up !== down) { input.up = down; changed = true; } break;
+        if (inputState.up !== down) { inputState.up = down; changed = true; } break;
       case 's': case 'S': case 'ArrowDown':
-        if (input.down !== down) { input.down = down; changed = true; } break;
+        if (inputState.down !== down) { inputState.down = down; changed = true; } break;
       case 'a': case 'A': case 'ArrowLeft':
-        if (input.left !== down) { input.left = down; changed = true; } break;
+        if (inputState.left !== down) { inputState.left = down; changed = true; } break;
       case 'd': case 'D': case 'ArrowRight':
-        if (input.right !== down) { input.right = down; changed = true; } break;
+        if (inputState.right !== down) { inputState.right = down; changed = true; } break;
     }
-    if (changed) sendInput();
-  }
-
-  function sendInput() {
-    const now = Date.now();
-    if (now - lastInputSent < 30) return; // basic throttle
-    lastInputSent = now;
-    socket.emit('player:input', input);
+    if (changed) socket.emit('player:input', inputState);
   }
 
   window.addEventListener('keydown', e => {
-    // Don't trap arrows while typing
-    if (document.activeElement === chatInput || document.activeElement === nameInput) return;
-    if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
+    if (document.activeElement === nameInput) return;
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
     setKey(e.key, true);
   });
-  window.addEventListener('keyup', e => {
-    setKey(e.key, false);
-  });
+  window.addEventListener('keyup', e => { setKey(e.key, false); });
+
+  // Periodic input heartbeat so server always has latest state
+  setInterval(() => {
+    if (latest.state === 'playing') socket.emit('player:input', inputState);
+  }, 100);
 
   // ---------- Game state / interpolation ----------
   let latest = { players: [], state: 'lobby' };
   let prev = { players: [], state: 'lobby' };
   let prevTime = 0;
   let latestTime = 0;
-  const INTERP_DELAY = 100; // ms behind most recent snapshot
+  const INTERP_DELAY = 100;
 
-  socket.on('game:snapshot', (snap) => {
+  socket.on('game:snapshot', snap => {
     prev = latest;
     prevTime = latestTime;
     latest = snap;
@@ -260,26 +351,22 @@
     winnerOverlay.classList.remove('show');
     eliminatedBanner.classList.remove('show');
   });
-  socket.on('game:countdown_tick', ({ remaining }) => {
-    showCountdown(remaining);
-  });
+  socket.on('game:countdown_tick', ({ remaining }) => { showCountdown(remaining); });
   socket.on('game:start', () => {
-    showCountdown('GO!', true);
+    showCountdown('GO!');
     gameStatus.textContent = 'FIGHT';
   });
-  socket.on('game:eliminated', ({ id, name }) => {
+  socket.on('game:eliminated', ({ id }) => {
     if (id === myId) {
       eliminatedBanner.classList.remove('show');
       void eliminatedBanner.offsetWidth;
       eliminatedBanner.classList.add('show');
     }
-    // System msg in lobby chat (visible when they return)
-    addSystemMessage(`${name} was pushed out of the ring`);
   });
-  socket.on('game:winner', (winner) => {
+  socket.on('game:winner', winner => {
     gameStatus.textContent = winner ? 'BOUT OVER' : 'DRAW';
     if (winner) {
-      winnerFace.src = faceCache.get(winner.id)?.src || '';
+      winnerFace.src = faceData.get(winner.id) || '';
       winnerName.textContent = winner.name;
       winnerOverlay.classList.add('show');
     }
@@ -290,10 +377,9 @@
     show('lobby');
   });
 
-  function showCountdown(value, big) {
+  function showCountdown(value) {
     countdownEl.textContent = value;
     countdownEl.classList.remove('show');
-    // Trigger reflow to restart animation
     void countdownEl.offsetWidth;
     countdownEl.classList.add('show');
   }
@@ -304,7 +390,7 @@
   function resizeCanvas() {
     const dpr = window.devicePixelRatio || 1;
     const w = window.innerWidth;
-    const h = window.innerHeight - 70; // minus header
+    const h = window.innerHeight - 70;
     gameCanvas.width = w * dpr;
     gameCanvas.height = h * dpr;
     gameCanvas.style.width = w + 'px';
@@ -317,23 +403,15 @@
   function interpolate() {
     const now = performance.now();
     const renderTime = now - INTERP_DELAY;
-
     if (!prev.players.length || !latest.players.length) return latest.players;
     const span = latestTime - prevTime;
     if (span <= 0) return latest.players;
-    let t = (renderTime - prevTime) / span;
-    t = Math.max(0, Math.min(1, t));
-
-    // Build a map of prev by id
+    let t = Math.max(0, Math.min(1, (renderTime - prevTime) / span));
     const prevMap = new Map(prev.players.map(p => [p.id, p]));
     return latest.players.map(p => {
       const pp = prevMap.get(p.id);
       if (!pp) return p;
-      return {
-        ...p,
-        x: pp.x + (p.x - pp.x) * t,
-        y: pp.y + (p.y - pp.y) * t,
-      };
+      return { ...p, x: pp.x + (p.x - pp.x) * t, y: pp.y + (p.y - pp.y) * t };
     });
   }
 
@@ -343,8 +421,8 @@
     const h = gameCanvas.height / (window.devicePixelRatio || 1);
     ctx.clearRect(0, 0, w, h);
 
-    // Compute viewport: scale so the arena fits with some margin
-    const margin = 80;
+    // Scale arena to nearly fill the canvas
+    const margin = 20;
     const scale = Math.min(
       (w - margin) / (config.ARENA_RADIUS * 2),
       (h - margin) / (config.ARENA_RADIUS * 2)
@@ -356,10 +434,8 @@
       y: cy + (wy - config.ARENA_CENTER.y) * scale,
     });
 
-    // Arena ring
     drawArena(cx, cy, config.ARENA_RADIUS * scale);
 
-    // Players (dead render below alive)
     const players = interpolate();
     const sorted = [...players].sort((a, b) => Number(a.alive) - Number(b.alive));
     for (const p of sorted) {
@@ -367,20 +443,17 @@
       drawPlayer(p, x, y, config.PLAYER_RADIUS * scale);
     }
 
-    // Update HUD
-    const aliveN = players.filter(p => p.alive).length;
-    aliveCount.textContent = aliveN;
+    aliveCount.textContent = players.filter(p => p.alive).length;
   }
 
   function drawArena(cx, cy, r) {
-    // Outer shadow ring
     ctx.save();
+
     ctx.beginPath();
     ctx.arc(cx, cy, r + 14, 0, Math.PI * 2);
     ctx.fillStyle = '#0a0b1a';
     ctx.fill();
 
-    // Dohyō (clay ring) — tan/sand
     const grad = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.3, r * 0.1, cx, cy, r);
     grad.addColorStop(0, '#e8c9a0');
     grad.addColorStop(0.7, '#c9a678');
@@ -390,18 +463,15 @@
     ctx.fillStyle = grad;
     ctx.fill();
 
-    // Inner border ring (white rope, shimenawa vibe)
     ctx.lineWidth = Math.max(3, r * 0.02);
     ctx.strokeStyle = '#f4ecd8';
     ctx.stroke();
 
-    // Center marker
     ctx.beginPath();
     ctx.arc(cx, cy, r * 0.04, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(15,16,32,0.35)';
     ctx.fill();
 
-    // Cross guides (faint)
     ctx.strokeStyle = 'rgba(15,16,32,0.12)';
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -412,38 +482,96 @@
     ctx.restore();
   }
 
+  // Draw a chibi sumo doll: topknot → head (face) → neck → body → mawashi → arms → legs
   function drawPlayer(p, x, y, r) {
-    const img = faceCache.get(p.id);
+    const img = getFaceImg(p.id);
     ctx.save();
 
-    const scale = p.alive ? 1 : Math.max(0.05, p.fallScale ?? 1);
+    const sc = p.alive ? 1 : Math.max(0.05, p.fallScale ?? 1);
     const rot = p.alive ? 0 : (p.fallRotation ?? 0);
 
     ctx.translate(x, y);
     ctx.rotate(rot);
-    ctx.scale(scale, scale);
+    ctx.scale(sc, sc);
 
-    // Shadow below
+    const bodyR = r * 1.1;
+    const bodyY = r + bodyR * 0.8;
+    const skin = p.id === myId ? '#dba96a' : '#ecc080';
+    const belt = p.id === myId ? '#e9b949' : '#d1334a';
+    const ring = p.id === myId ? '#e9b949' : '#f4ecd8';
+
+    // Ground shadow
     if (p.alive) {
       ctx.beginPath();
-      ctx.ellipse(0, r * 0.9, r * 0.85, r * 0.25, 0, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      ctx.ellipse(0, bodyY + bodyR + r * 0.12, bodyR * 0.9, r * 0.16, 0, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(0,0,0,0.28)';
       ctx.fill();
     }
 
-    // Ring around face
+    // Legs
+    for (const s of [-1, 1]) {
+      ctx.beginPath();
+      ctx.ellipse(s * bodyR * 0.37, bodyY + bodyR * 0.68, r * 0.3, r * 0.44, 0, 0, Math.PI * 2);
+      ctx.fillStyle = skin;
+      ctx.fill();
+      ctx.strokeStyle = '#0f1020';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    // Body
     ctx.beginPath();
-    ctx.arc(0, 0, r + 3, 0, Math.PI * 2);
-    ctx.fillStyle = p.id === myId ? '#e9b949' : '#f4ecd8';
+    ctx.arc(0, bodyY, bodyR, 0, Math.PI * 2);
+    ctx.fillStyle = skin;
+    ctx.fill();
+    ctx.strokeStyle = '#0f1020';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Mawashi belt (clipped to body)
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(0, bodyY, bodyR, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.fillStyle = belt;
+    ctx.fillRect(-bodyR, bodyY - bodyR * 0.4, bodyR * 2, bodyR * 0.8);
+    ctx.restore();
+    ctx.beginPath();
+    ctx.arc(0, bodyY, bodyR, 0, Math.PI * 2);
+    ctx.strokeStyle = '#0f1020';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Arms
+    for (const s of [-1, 1]) {
+      ctx.beginPath();
+      ctx.ellipse(s * (bodyR + r * 0.3), bodyY - bodyR * 0.1, r * 0.36, r * 0.26, s * 0.35, 0, Math.PI * 2);
+      ctx.fillStyle = skin;
+      ctx.fill();
+      ctx.strokeStyle = '#0f1020';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    // Neck
+    ctx.beginPath();
+    ctx.ellipse(0, r * 0.84, r * 0.36, r * 0.22, 0, 0, Math.PI * 2);
+    ctx.fillStyle = skin;
     ctx.fill();
 
-    // Face circle (clipped image)
+    // Head ring (gold for me, cream for others)
+    ctx.beginPath();
+    ctx.arc(0, 0, r + 3, 0, Math.PI * 2);
+    ctx.fillStyle = ring;
+    ctx.fill();
+
+    // Face image clipped to circle
     ctx.save();
     ctx.beginPath();
     ctx.arc(0, 0, r, 0, Math.PI * 2);
     ctx.closePath();
     ctx.clip();
-    if (img && img.complete) {
+    if (img && img.complete && img.naturalWidth > 0) {
       ctx.drawImage(img, -r, -r, r * 2, r * 2);
     } else {
       ctx.fillStyle = '#2a2f6b';
@@ -451,23 +579,46 @@
     }
     ctx.restore();
 
-    // Name label
-    if (p.alive && scale > 0.5) {
-      ctx.fillStyle = '#f4ecd8';
-      ctx.strokeStyle = '#0f1020';
-      ctx.lineWidth = 4;
-      ctx.font = `bold ${Math.max(11, r * 0.32)}px 'Bungee', sans-serif`;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.strokeStyle = '#0f1020';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Topknot (chonmage)
+    ctx.beginPath();
+    ctx.ellipse(0, -r - 7, r * 0.15, r * 0.26, 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#1a1205';
+    ctx.fill();
+
+    // Name label below body
+    if (p.alive && sc > 0.5) {
+      const fs = Math.max(11, r * 0.3);
+      ctx.font = `bold ${fs}px 'Bungee', sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
       const label = p.name.toUpperCase();
-      ctx.strokeText(label, 0, r + 10);
-      ctx.fillText(label, 0, r + 10);
+      const ly = bodyY + bodyR + 6;
+      ctx.strokeStyle = '#0f1020';
+      ctx.lineWidth = 4;
+      ctx.strokeText(label, 0, ly);
+      ctx.fillStyle = '#f4ecd8';
+      ctx.fillText(label, 0, ly);
     }
 
     ctx.restore();
   }
 
   render();
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
 
   // ---------- Boot ----------
   show('login');

@@ -54,6 +54,9 @@
     <canvas id="snapCanvas" style="display:none;" width="256" height="256"></canvas>
   </section>
 
+  <!-- Hidden live video for continuous frame capture -->
+  <video id="liveVideo" style="position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;" autoplay muted playsinline></video>
+
   <!-- ============ LOBBY SCREEN ============ -->
   <section id="screen-lobby" class="screen">
     <div class="lobby">
@@ -75,13 +78,13 @@
       <aside class="lobby__right">
         <div class="section-head">
           <span class="section-head__num">03</span>
-          <h2>TRASH TALK</h2>
+          <h2>VOICE CHAT</h2>
         </div>
-        <div id="chatMessages" class="chat-messages"></div>
-        <form id="chatForm" class="chat-form">
-          <input id="chatInput" type="text" maxlength="200" placeholder="say something…" autocomplete="off" />
-          <button type="submit" class="btn btn--icon">↵</button>
-        </form>
+        <div id="voiceList" class="voice-list"></div>
+        <div class="voice-controls">
+          <div id="voiceStatus" class="voice-status">CONNECTING MIC…</div>
+          <button id="muteBtn">🎤 MUTE</button>
+        </div>
       </aside>
     </div>
   </section>
