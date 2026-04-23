@@ -611,6 +611,73 @@
 
   render();
 
+  // ---------- Virtual joystick (touch) ----------
+  const joystickBase = $('joystickBase');
+  const joystickThumb = $('joystickThumb');
+  const JOY_RADIUS = 55;  // max thumb travel in px
+  const JOY_DEAD = 14;    // dead-zone in px
+  let activeTouchId = null;
+  let joyOriginX = 0;
+  let joyOriginY = 0;
+
+  function applyJoy(dx, dy) {
+    inputState.up    = dy < -JOY_DEAD;
+    inputState.down  = dy >  JOY_DEAD;
+    inputState.left  = dx < -JOY_DEAD;
+    inputState.right = dx >  JOY_DEAD;
+    socket.emit('player:input', inputState);
+
+    // Move thumb visually (clamped to circle)
+    const dist = Math.hypot(dx, dy);
+    const clamp = Math.min(dist, JOY_RADIUS);
+    const angle = Math.atan2(dy, dx);
+    const tx = Math.cos(angle) * clamp;
+    const ty = Math.sin(angle) * clamp;
+    joystickThumb.style.transform = `translate(calc(-50% + ${tx}px), calc(-50% + ${ty}px))`;
+  }
+
+  function joyReset() {
+    activeTouchId = null;
+    joystickBase.classList.remove('active');
+    joystickThumb.style.transform = 'translate(-50%, -50%)';
+    inputState.up = inputState.down = inputState.left = inputState.right = false;
+    socket.emit('player:input', inputState);
+  }
+
+  gameCanvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    if (activeTouchId !== null) return;
+    const t = e.changedTouches[0];
+    activeTouchId = t.identifier;
+    joyOriginX = t.clientX;
+    joyOriginY = t.clientY;
+    // Position base under finger (centered)
+    joystickBase.style.left = (t.clientX - 65) + 'px';
+    joystickBase.style.top  = (t.clientY - 65) + 'px';
+    joystickBase.classList.add('active');
+  }, { passive: false });
+
+  gameCanvas.addEventListener('touchmove', e => {
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      if (t.identifier === activeTouchId) {
+        applyJoy(t.clientX - joyOriginX, t.clientY - joyOriginY);
+      }
+    }
+  }, { passive: false });
+
+  gameCanvas.addEventListener('touchend', e => {
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      if (t.identifier === activeTouchId) joyReset();
+    }
+  }, { passive: false });
+
+  gameCanvas.addEventListener('touchcancel', e => {
+    e.preventDefault();
+    joyReset();
+  }, { passive: false });
+
   function escapeHtml(s) {
     return String(s)
       .replace(/&/g, '&amp;')

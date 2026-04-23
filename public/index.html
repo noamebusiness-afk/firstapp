@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
   <title>相撲 · SUMO FACES</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -100,11 +100,17 @@
       <div class="game-hud__center" id="gameStatus">READY</div>
       <div class="game-hud__right">
         <span class="hud-label">CTRL</span>
-        <span class="hud-keys">W A S D · ↑ ← ↓ →</span>
+        <span class="hud-keys hud-keys--desktop">W A S D · ↑ ← ↓ →</span>
+        <span class="hud-keys hud-keys--mobile">DRAG TO MOVE</span>
       </div>
     </div>
 
     <canvas id="gameCanvas"></canvas>
+
+    <!-- Virtual joystick -->
+    <div id="joystickBase" class="joystick-base">
+      <div id="joystickThumb" class="joystick-thumb"></div>
+    </div>
 
     <!-- Countdown overlay -->
     <div id="countdown" class="countdown"></div>

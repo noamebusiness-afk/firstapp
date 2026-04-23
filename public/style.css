@@ -628,3 +628,36 @@ body {
   60% { opacity: 1; transform: translate(-50%, -50%) scale(1) rotate(-2deg); }
   100% { opacity: 0; transform: translate(-50%, -50%) scale(0.9) rotate(0); }
 }
+
+/* ============ Virtual Joystick ============ */
+.joystick-base {
+  display: none;
+  position: fixed;
+  width: 130px;
+  height: 130px;
+  border-radius: 50%;
+  background: rgba(244, 236, 216, 0.12);
+  border: 3px solid rgba(244, 236, 216, 0.35);
+  z-index: 7;
+  pointer-events: none;
+  box-shadow: 0 0 0 6px rgba(233, 185, 73, 0.1);
+}
+.joystick-base.active { display: block; }
+.joystick-thumb {
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 54px; height: 54px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #e9b949, #c9922a);
+  border: 3px solid var(--ink);
+  transform: translate(-50%, -50%);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  transition: none;
+}
+
+/* HUD keys: show desktop hint on desktop, mobile hint on touch devices */
+.hud-keys--mobile { display: none; }
+@media (pointer: coarse) {
+  .hud-keys--desktop { display: none; }
+  .hud-keys--mobile { display: inline; }
+}
