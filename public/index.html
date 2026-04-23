@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>相撲 · SUMO FACES</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bungee&family=Shippori+Mincho:wght@700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Paper grain + noise overlay -->
+  <div class="grain"></div>
+
+  <!-- Top banner -->
+  <header class="banner">
+    <div class="banner__kanji">相撲</div>
+    <div class="banner__title">SUMO · FACES</div>
+    <div class="banner__dots"><span></span><span></span><span></span></div>
+  </header>
+
+  <!-- ============ LOGIN SCREEN ============ -->
+  <section id="screen-login" class="screen active">
+    <div class="login-card">
+      <div class="login-card__ribbon">STEP 01 — ENTRY</div>
+      <h1 class="login-card__title">
+        Scan your face.<br/>
+        <span class="accent">Enter the ring.</span>
+      </h1>
+
+      <div class="login-card__body">
+        <div class="video-wrap">
+          <video id="video" autoplay playsinline muted></video>
+          <div class="video-frame"></div>
+          <div class="video-target"></div>
+          <div class="video-meta">LIVE · CAM 01</div>
+        </div>
+
+        <div class="login-form">
+          <label class="login-form__label">YOUR RING NAME</label>
+          <input id="nameInput" type="text" maxlength="20" placeholder="e.g. thunder-belly" />
+
+          <button id="snapBtn" class="btn btn--primary" disabled>
+            <span class="btn__text">SNAP &amp; JOIN</span>
+            <span class="btn__arrow">→</span>
+          </button>
+
+          <p class="login-form__hint" id="loginHint">Waiting for camera…</p>
+        </div>
+      </div>
+    </div>
+
+    <canvas id="snapCanvas" style="display:none;" width="256" height="256"></canvas>
+  </section>
+
+  <!-- ============ LOBBY SCREEN ============ -->
+  <section id="screen-lobby" class="screen">
+    <div class="lobby">
+      <div class="lobby__left">
+        <div class="section-head">
+          <span class="section-head__num">02</span>
+          <h2>THE DOHYŌ AWAITS</h2>
+          <span class="section-head__count" id="playerCount">0 rikishi</span>
+        </div>
+
+        <div id="playerGrid" class="player-grid"></div>
+
+        <button id="startBtn" class="btn btn--primary btn--huge">
+          <span class="btn__text">START THE BOUT</span>
+          <span class="btn__arrow">⚔</span>
+        </button>
+      </div>
+
+      <aside class="lobby__right">
+        <div class="section-head">
+          <span class="section-head__num">03</span>
+          <h2>TRASH TALK</h2>
+        </div>
+        <div id="chatMessages" class="chat-messages"></div>
+        <form id="chatForm" class="chat-form">
+          <input id="chatInput" type="text" maxlength="200" placeholder="say something…" autocomplete="off" />
+          <button type="submit" class="btn btn--icon">↵</button>
+        </form>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ============ GAME SCREEN ============ -->
+  <section id="screen-game" class="screen">
+    <div class="game-hud">
+      <div class="game-hud__left">
+        <span class="hud-label">ROUND</span>
+        <span class="hud-value" id="aliveCount">—</span>
+        <span class="hud-label-sub">remaining</span>
+      </div>
+      <div class="game-hud__center" id="gameStatus">READY</div>
+      <div class="game-hud__right">
+        <span class="hud-label">CTRL</span>
+        <span class="hud-keys">W A S D · ↑ ← ↓ →</span>
+      </div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- Countdown overlay -->
+    <div id="countdown" class="countdown"></div>
+
+    <!-- Winner overlay -->
+    <div id="winnerOverlay" class="winner-overlay">
+      <div class="winner-card">
+        <div class="winner-card__label">YOKOZUNA</div>
+        <div class="winner-card__face"><img id="winnerFace" alt="winner" /></div>
+        <div class="winner-card__name" id="winnerName"></div>
+        <div class="winner-card__sub">returning to the dohyō…</div>
+      </div>
+    </div>
+
+    <!-- Elimination toast -->
+    <div id="eliminatedBanner" class="eliminated-banner">YOU FELL OUT!</div>
+  </section>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
