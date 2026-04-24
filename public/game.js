@@ -249,18 +249,30 @@
   // ---------- Lobby state ----------
   socket.on('lobby:update', ({ players, state }) => {
     playerGrid.innerHTML = '';
-    players.forEach(p => {
+    let myReady = false;
+    players.forEach((p, index) => {
       if (p.face) setFace(p.id, p.face);
+      if (p.id === myId && p.ready) myReady = true;
       const card = document.createElement('div');
-      card.className = 'player-card';
+      card.className = 'player-card' + (p.ready ? ' player-card--ready' : '');
       card.dataset.pid = p.id;
       card.innerHTML = `
         <div class="player-card__face"><img src="${faceData.get(p.id) || p.face || ''}" alt="${p.name}" /></div>
         <div class="player-card__name">${escapeHtml(p.name)}</div>
         ${p.id === myId ? '<div class="player-card__badge">YOU</div>' : ''}
+        ${p.ready ? '<div class="player-card__ready">✓ מוכן</div>' : ''}
       `;
+      card.style.animationDelay = `${(index * 0.4) % 2}s`;
       playerGrid.appendChild(card);
     });
+    // Update ready button state
+    if (myReady) {
+      startBtn.disabled = true;
+      startBtn.querySelector('.btn__text').textContent = 'ממתין לאחרים...';
+    } else {
+      startBtn.disabled = false;
+      startBtn.querySelector('.btn__text').textContent = '✓ אני מוכן!';
+    }
     playerCount.textContent = `${players.length} מתאבקים`;
 
     if (voiceList) {
@@ -302,7 +314,9 @@
   });
 
   startBtn.addEventListener('click', () => {
-    socket.emit('game:start_request');
+    socket.emit('player:ready');
+    startBtn.disabled = true;
+    startBtn.querySelector('.btn__text').textContent = 'ממתין לאחרים...';
     startBtn.blur();
   });
 
@@ -454,6 +468,8 @@
       drawPlayer(p, x, y, config.PLAYER_RADIUS * scale);
     }
 
+    drawFruits(latest.fruits || [], toScreen, scale);
+
     aliveCount.textContent = players.filter(p => p.alive).length;
   }
 
@@ -537,150 +553,113 @@
   }
 
   function drawPlayer(p, x, y, r) {
-    const img = getFaceImg(p.id);
     ctx.save();
 
     const sc = p.alive ? 1 : Math.max(0.05, p.fallScale ?? 1);
     const rot = p.alive ? 0 : (p.fallRotation ?? 0);
 
-    // Walking / running animation
+    // Grow with sizeBonus (fruits)
+    const renderR = r * (1 + (p.sizeBonus || 0) * 0.2);
+
+    // Head wobble when moving
     const t = performance.now() / 1000;
     const speed = Math.hypot(p.vx || 0, p.vy || 0);
     const moving = p.alive && speed > 0.35;
-    const phase = t * Math.max(speed, 1) * 3.8;
-    const bob = moving ? Math.abs(Math.sin(phase)) * r * -0.14 : 0;
-    const legSwing = moving ? Math.sin(phase) : 0;
-    const squashX = moving ? 1 + Math.abs(Math.sin(phase)) * 0.06 : 1;
-    // Lean left/right based on horizontal velocity
-    const leanAmt = moving ? Math.sign(p.vx || 0) * Math.min(speed * 0.022, 0.15) : 0;
+    const phase = t * Math.max(speed, 1) * 4;
+    const wobble = moving ? Math.sin(phase) * renderR * 0.08 : 0;
 
-    ctx.translate(x, y + (p.alive ? bob : 0));
-    ctx.rotate(rot + (p.alive ? leanAmt : 0));
-    ctx.scale(sc * squashX, sc / squashX);
+    ctx.translate(x + wobble, y);
+    ctx.rotate(rot);
+    ctx.scale(sc, sc);
 
-    const bodyR = r * 1.6;
-    const bodyY = r + bodyR * 0.75;
-    const skin = p.id === myId ? '#dba96a' : '#ecc080';
-    const belt = p.id === myId ? '#e9b949' : '#d1334a';
     const ring = p.id === myId ? '#e9b949' : '#f4ecd8';
 
-    // Ground shadow (shrinks when mid-bounce)
+    // Shadow
     if (p.alive) {
-      const shadowScale = moving ? 0.7 + 0.3 * Math.abs(Math.sin(phase)) : 1;
       ctx.beginPath();
-      ctx.ellipse(0, bodyY + bodyR + r * 0.12, bodyR * 0.85 * shadowScale, r * 0.14, 0, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(0,0,0,0.32)';
+      ctx.ellipse(0, renderR + 6, renderR * 0.75, renderR * 0.18, 0, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
       ctx.fill();
     }
 
-    // Legs — alternate forward/back when walking
-    const leftLegX  = -bodyR * 0.37 + legSwing * r * 0.28;
-    const rightLegX =  bodyR * 0.37 - legSwing * r * 0.28;
-    for (const [lx] of [[leftLegX], [rightLegX]]) {
-      ctx.beginPath();
-      ctx.ellipse(lx, bodyY + bodyR * 0.68, r * 0.3, r * 0.44, 0, 0, Math.PI * 2);
-      ctx.fillStyle = skin;
-      ctx.fill();
-      ctx.strokeStyle = '#0f1020';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-    }
-
-    // Body
+    // Head ring glow
+    if (p.id === myId) { ctx.shadowColor = '#e9b949'; ctx.shadowBlur = 14; }
     ctx.beginPath();
-    ctx.arc(0, bodyY, bodyR, 0, Math.PI * 2);
-    ctx.fillStyle = skin;
-    ctx.fill();
-    ctx.strokeStyle = '#0f1020';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    // Mawashi belt (clipped to body)
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(0, bodyY, bodyR, 0, Math.PI * 2);
-    ctx.clip();
-    ctx.fillStyle = belt;
-    ctx.fillRect(-bodyR, bodyY - bodyR * 0.4, bodyR * 2, bodyR * 0.8);
-    ctx.restore();
-    ctx.beginPath();
-    ctx.arc(0, bodyY, bodyR, 0, Math.PI * 2);
-    ctx.strokeStyle = '#0f1020';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    // Arms — swing opposite to legs
-    const leftArmY  = bodyY - bodyR * 0.1 - legSwing * r * 0.3;
-    const rightArmY = bodyY - bodyR * 0.1 + legSwing * r * 0.3;
-    for (const [ax, ay, s] of [[-(bodyR + r * 0.3), leftArmY, -1], [(bodyR + r * 0.3), rightArmY, 1]]) {
-      ctx.beginPath();
-      ctx.ellipse(ax, ay, r * 0.36, r * 0.26, s * 0.35, 0, Math.PI * 2);
-      ctx.fillStyle = skin;
-      ctx.fill();
-      ctx.strokeStyle = '#0f1020';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-    }
-
-    // Neck
-    ctx.beginPath();
-    ctx.ellipse(0, r * 0.84, r * 0.36, r * 0.22, 0, 0, Math.PI * 2);
-    ctx.fillStyle = skin;
-    ctx.fill();
-
-    // Head ring glow (gold = me, cream = others)
-    if (p.id === myId) {
-      ctx.shadowColor = '#e9b949';
-      ctx.shadowBlur = 10;
-    }
-    ctx.beginPath();
-    ctx.arc(0, 0, r + 3, 0, Math.PI * 2);
+    ctx.arc(0, 0, renderR + 4, 0, Math.PI * 2);
     ctx.fillStyle = ring;
     ctx.fill();
     ctx.shadowBlur = 0;
 
-    // Face image clipped
+    // Face image (or dog emoji for bot)
     ctx.save();
     ctx.beginPath();
-    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.arc(0, 0, renderR, 0, Math.PI * 2);
     ctx.closePath();
     ctx.clip();
-    if (img && img.complete && img.naturalWidth > 0) {
-      ctx.drawImage(img, -r, -r, r * 2, r * 2);
+    if (p.isBot) {
+      ctx.fillStyle = '#1a3a1a';
+      ctx.fillRect(-renderR, -renderR, renderR * 2, renderR * 2);
+      ctx.font = `${renderR * 1.4}px serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('🐕', 0, 0);
     } else {
-      ctx.fillStyle = '#2a2f6b';
-      ctx.fillRect(-r, -r, r * 2, r * 2);
+      const img = getFaceImg(p.id);
+      if (img && img.complete && img.naturalWidth > 0) {
+        ctx.drawImage(img, -renderR, -renderR, renderR * 2, renderR * 2);
+      } else {
+        ctx.fillStyle = '#2a2f6b';
+        ctx.fillRect(-renderR, -renderR, renderR * 2, renderR * 2);
+      }
     }
     ctx.restore();
 
+    // Head border
     ctx.beginPath();
-    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.arc(0, 0, renderR, 0, Math.PI * 2);
     ctx.strokeStyle = '#0f1020';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 2.5;
     ctx.stroke();
 
-    // Topknot (chonmage)
-    ctx.beginPath();
-    ctx.ellipse(0, -r - 7, r * 0.15, r * 0.26, 0, 0, Math.PI * 2);
-    ctx.fillStyle = '#1a1205';
-    ctx.fill();
+    // Topknot
+    if (!p.isBot) {
+      ctx.beginPath();
+      ctx.ellipse(0, -renderR - 6, renderR * 0.14, renderR * 0.24, 0, 0, Math.PI * 2);
+      ctx.fillStyle = '#1a1205';
+      ctx.fill();
+    }
 
-    // Name label
+    // Name above head
     if (p.alive && sc > 0.5) {
-      const fs = Math.max(11, r * 0.3);
+      const fs = Math.max(10, renderR * 0.32);
       ctx.font = `bold ${fs}px 'Bungee', sans-serif`;
       ctx.textAlign = 'center';
-      ctx.textBaseline = 'top';
+      ctx.textBaseline = 'bottom';
       const label = p.name.toUpperCase();
-      const ly = bodyY + bodyR + 6;
+      const ly = -renderR - (p.isBot ? 4 : 14);
       ctx.strokeStyle = '#0f1020';
       ctx.lineWidth = 4;
       ctx.strokeText(label, 0, ly);
-      ctx.fillStyle = '#f4ecd8';
+      ctx.fillStyle = p.isBot ? '#4fc2a0' : '#f4ecd8';
       ctx.fillText(label, 0, ly);
     }
 
     ctx.restore();
+  }
+
+  function drawFruits(fruits, toScreen, scale) {
+    const fs = Math.round(18 * scale * 2.2);
+    for (const f of fruits) {
+      const { x, y } = toScreen(f.x, f.y);
+      ctx.save();
+      ctx.shadowColor = 'rgba(255, 220, 80, 0.8)';
+      ctx.shadowBlur = 10;
+      ctx.font = `${fs}px serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(f.type, x, y);
+      ctx.restore();
+    }
   }
 
   render();
@@ -760,6 +739,28 @@
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;');
   }
+
+  // ---------- Toast notifications ----------
+  let activeToast = null;
+  function showToast(msg) {
+    if (activeToast) { activeToast.remove(); activeToast = null; }
+    const el = document.createElement('div');
+    el.className = 'toast';
+    el.textContent = msg;
+    document.body.appendChild(el);
+    activeToast = el;
+    setTimeout(() => {
+      if (activeToast === el) { el.remove(); activeToast = null; }
+    }, 2500);
+  }
+
+  socket.on('fruit:eaten', ({ fruitType, message }) => {
+    showToast(`${fruitType} ${message}`);
+  });
+
+  socket.on('tzofi:bark', () => {
+    showToast('🐕 וואף וואף! אני צופי!');
+  });
 
   // ---------- Boot ----------
   show('login');

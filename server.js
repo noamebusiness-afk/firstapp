@@ -24,6 +24,13 @@ const MAX_SPEED = 8;
 const COUNTDOWN_SECONDS = 3;
 const WIN_DISPLAY_MS = 5000;
 
+const FRUIT_RADIUS = 18;
+const MAX_FRUITS = 4;
+const FRUIT_TYPES = ['🍎','🍊','🍇','🍌','🍓'];
+const TZOFI_ID = 'bot-tzofi';
+const TZOFI_SPEED = 6;
+const TZOFI_ACCEL = 0.45;
+
 // ---------- State ----------
 const STATE = {
   LOBBY: 'lobby',
@@ -36,6 +43,8 @@ let gameState = STATE.LOBBY;
 let players = {}; // id -> { id, name, face, x, y, vx, vy, input, alive, eliminatedAt, fallRotation, fallScale }
 let countdownTimer = null;
 let gameEndTimer = null;
+let fruits = [];
+let tickCount = 0;
 
 function newSpawnPosition(index, total) {
   // Ring spawn around center
@@ -47,11 +56,16 @@ function newSpawnPosition(index, total) {
   };
 }
 
+function playerRadius(p) {
+  return PLAYER_RADIUS * (1 + (p.sizeBonus || 0) * 0.2);
+}
+
 function broadcastLobby() {
   const list = Object.values(players).map(p => ({
     id: p.id,
     name: p.name,
     face: p.face,
+    ready: p.ready || false,
   }));
   io.emit('lobby:update', { players: list, state: gameState });
 }
@@ -68,7 +82,10 @@ function snapshot() {
       alive: p.alive,
       fallRotation: p.fallRotation,
       fallScale: p.fallScale,
+      sizeBonus: p.sizeBonus || 0,
+      isBot: p.isBot || false,
     })),
+    fruits,
     state: gameState,
   };
 }
@@ -121,7 +138,7 @@ function stepPhysics() {
       const dx = b.x - a.x;
       const dy = b.y - a.y;
       const dist = Math.hypot(dx, dy) || 0.0001;
-      const minDist = PLAYER_RADIUS * 2;
+      const minDist = playerRadius(a) + playerRadius(b);
 
       if (dist < minDist) {
         // Normalize
@@ -141,7 +158,7 @@ function stepPhysics() {
         const velAlongNormal = rvx * nx + rvy * ny;
         if (velAlongNormal > 0) continue; // already separating
 
-        const restitution = 1.05; // slightly bouncy, classic sumo push
+        const restitution = 1.6; // strong sumo push
         const jImp = -(1 + restitution) * velAlongNormal / (1 / PLAYER_MASS + 1 / PLAYER_MASS);
 
         const impulseX = jImp * nx;
@@ -167,6 +184,29 @@ function stepPhysics() {
     }
   }
 
+  // Fruit eating
+  for (const p of alive) {
+    for (let fi = fruits.length - 1; fi >= 0; fi--) {
+      const f = fruits[fi];
+      const d = Math.hypot(p.x - f.x, p.y - f.y);
+      if (d < playerRadius(p) + FRUIT_RADIUS) {
+        p.sizeBonus = (p.sizeBonus || 0) + 1;
+        const msgs = [
+          'אכלת פרי! אתה שמן עכשיו',
+          'וואו! עוד אחד? אתה ממש ענק!',
+          'אי אפשר לעצור אותך!',
+        ];
+        io.emit('fruit:eaten', {
+          playerId: p.id,
+          playerName: p.name,
+          fruitType: f.type,
+          message: msgs[Math.min((p.sizeBonus - 1), msgs.length - 1)],
+        });
+        fruits.splice(fi, 1);
+      }
+    }
+  }
+
   // Win condition
   if (gameState === STATE.PLAYING) {
     const stillAlive = list.filter(p => p.alive);
@@ -182,7 +222,9 @@ function stepPhysics() {
 
 function returnToLobby() {
   gameState = STATE.LOBBY;
-  // Reset alive/positions
+  fruits = [];
+  tickCount = 0;
+  delete players[TZOFI_ID];
   for (const p of Object.values(players)) {
     p.alive = true;
     p.vx = 0;
@@ -190,6 +232,8 @@ function returnToLobby() {
     p.fallRotation = 0;
     p.fallScale = 1;
     p.input = {};
+    p.sizeBonus = 0;
+    p.ready = false;
   }
   broadcastLobby();
   io.emit('game:to_lobby');
@@ -214,6 +258,16 @@ function startCountdown() {
     p.input = {};
   });
 
+  // Spawn Tzofi NPC alongside human players
+  const tzofiPos = newSpawnPosition(list.length, list.length + 1);
+  players[TZOFI_ID] = {
+    id: TZOFI_ID, name: 'צופי', face: null,
+    x: tzofiPos.x, y: tzofiPos.y,
+    vx: 0, vy: 0, input: {}, alive: true,
+    fallRotation: 0, fallScale: 1,
+    isBot: true, sizeBonus: 0,
+  };
+
   io.emit('game:countdown_start', { seconds: COUNTDOWN_SECONDS });
 
   let remaining = COUNTDOWN_SECONDS;
@@ -230,11 +284,64 @@ function startCountdown() {
   }, 1000);
 }
 
+function stepTzofi() {
+  const tz = players[TZOFI_ID];
+  if (!tz || !tz.alive) return;
+
+  const targets = Object.values(players).filter(p => p.alive && p.id !== TZOFI_ID);
+  if (targets.length === 0) return;
+
+  let nearest = null, nearD = Infinity;
+  for (const t of targets) {
+    const d = Math.hypot(t.x - tz.x, t.y - tz.y);
+    if (d < nearD) { nearD = d; nearest = t; }
+  }
+
+  if (nearest) {
+    const dx = nearest.x - tz.x;
+    const dy = nearest.y - tz.y;
+    const len = Math.hypot(dx, dy) || 1;
+    tz.vx += (dx / len) * TZOFI_ACCEL;
+    tz.vy += (dy / len) * TZOFI_ACCEL;
+  }
+
+  const sp = Math.hypot(tz.vx, tz.vy);
+  if (sp > TZOFI_SPEED) {
+    tz.vx = (tz.vx / sp) * TZOFI_SPEED;
+    tz.vy = (tz.vy / sp) * TZOFI_SPEED;
+  }
+
+  // Nudge back toward center if getting close to edge
+  const distFromCenter = Math.hypot(tz.x - ARENA_CENTER.x, tz.y - ARENA_CENTER.y);
+  if (distFromCenter > ARENA_RADIUS * 0.85) {
+    const ang = Math.atan2(ARENA_CENTER.y - tz.y, ARENA_CENTER.x - tz.x);
+    tz.vx += Math.cos(ang) * 0.8;
+    tz.vy += Math.sin(ang) * 0.8;
+  }
+}
+
 // ---------- Tick loop ----------
 setInterval(() => {
+  tickCount++;
   if (gameState === STATE.PLAYING || gameState === STATE.ENDED || gameState === STATE.COUNTDOWN) {
     if (gameState === STATE.PLAYING || gameState === STATE.ENDED) {
+      if (gameState === STATE.PLAYING) stepTzofi();
       stepPhysics();
+    }
+    if (gameState === STATE.PLAYING) {
+      if (fruits.length < MAX_FRUITS && tickCount % 150 === 0) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = Math.random() * ARENA_RADIUS * 0.72;
+        fruits.push({
+          id: tickCount,
+          x: ARENA_CENTER.x + Math.cos(angle) * dist,
+          y: ARENA_CENTER.y + Math.sin(angle) * dist,
+          type: FRUIT_TYPES[Math.floor(Math.random() * FRUIT_TYPES.length)],
+        });
+      }
+      if (players[TZOFI_ID] && tickCount % 180 === 0) {
+        io.emit('tzofi:bark');
+      }
     }
     io.emit('game:snapshot', snapshot());
   }
@@ -263,6 +370,7 @@ io.on('connection', (socket) => {
       alive: true,
       fallRotation: 0,
       fallScale: 1,
+      ready: false,
     };
 
     socket.emit('player:joined', { id: socket.id, peerIds });
@@ -289,8 +397,20 @@ io.on('connection', (socket) => {
     io.to(to).emit('webrtc:ice', { from: socket.id, candidate });
   });
 
+  socket.on('player:ready', () => {
+    const p = players[socket.id];
+    if (!p || gameState !== STATE.LOBBY) return;
+    p.ready = true;
+    broadcastLobby();
+    const all = Object.values(players);
+    if (all.length >= 1 && all.every(pp => pp.ready)) {
+      startCountdown();
+    }
+  });
+
   socket.on('game:start_request', () => {
-    startCountdown();
+    const all = Object.values(players);
+    if (all.length >= 1 && all.every(pp => pp.ready)) startCountdown();
   });
 
   socket.on('player:input', (input) => {
